@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="kafeiche" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find kafeiche_description)/urdf/kafeiche_control.xacro" />
+  <xacro:property name="clearance" value="0.15" />
+  <xacro:property name="mesh_pkg" value="package://kafeiche_description/meshes/" />
+
+  <!-- helper macros -->
+  <xacro:macro name="inertial_block" params="mass origin_xyz origin_rpy ixx ixy ixz iyy iyz izz">
+    <inertial>
+      <origin xyz="${origin_xyz}" rpy="${origin_rpy}" />
+      <mass value="${mass}" />
+      <inertia ixx="${ixx}" ixy="${ixy}" ixz="${ixz}" iyy="${iyy}" iyz="${iyz}" izz="${izz}" />
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="mesh_geometry" params="mesh">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh}" />
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="${mesh}" />
+      </geometry>
+    </collision>
+  </xacro:macro>
+
+  <xacro:macro name="mesh_link" params="name mesh mass origin_xyz origin_rpy ixx ixy ixz iyy iyz izz">
+    <link name="${name}">
+      <xacro:inertial_block mass="${mass}" origin_xyz="${origin_xyz}" origin_rpy="${origin_rpy}"
+        ixx="${ixx}" ixy="${ixy}" ixz="${ixz}" iyy="${iyy}" iyz="${iyz}" izz="${izz}" />
+      <xacro:mesh_geometry mesh="${mesh}" />
+    </link>
+  </xacro:macro>
+
+  <xacro:macro name="fixed_joint" params="name parent child origin_xyz origin_rpy">
+    <joint name="${name}" type="fixed">
+      <origin xyz="${origin_xyz}" rpy="${origin_rpy}" />
+      <parent link="${parent}" />
+      <child link="${child}" />
+      <axis xyz="0 0 0" />
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="continuous_joint" params="name parent child origin_xyz origin_rpy axis_xyz">
+    <joint name="${name}" type="continuous">
+      <origin xyz="${origin_xyz}" rpy="${origin_rpy}" />
+      <parent link="${parent}" />
+      <child link="${child}" />
+      <axis xyz="${axis_xyz}" />
+    </joint>
+  </xacro:macro>
+
+  <!-- base link -->
+  <xacro:mesh_link
+    name="kafeiche_base"
+    mesh="${mesh_pkg}kafeiche_base.stl"
+    mass="1.2"
+    origin_xyz="-0.046471 0.00017685 -0.11146"
+    origin_rpy="0 0 0"
+    ixx="0.010329"
+    ixy="-3.1343E-05"
+    ixz="0.00095779"
+    iyy="0.016048"
+    iyz="-0.00013868"
+    izz="0.024377" />
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <sphere radius="0.001" />
+      </geometry>
+    </visual>
+  </link>
+
+  <xacro:fixed_joint name="base_link_to_kafeiche_base" parent="base_link" child="kafeiche_base"
+    origin_xyz="0 0 0" origin_rpy="0 0 0" />
+
+  <link name="base_footprint">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <box size="0.5 0.34 0.001" />
+      </geometry>
+    </visual>
+  </link>
+
+  <xacro:fixed_joint name="base_footprint_to_base_link" parent="base_footprint" child="base_link"
+    origin_xyz="0 0 ${clearance}" origin_rpy="0 0 0" />
+
+  <!-- front wheel module -->
+  <xacro:mesh_link
+    name="link_front_wheel_base"
+    mesh="${mesh_pkg}link_front_wheel_base.stl"
+    mass="1"
+    origin_xyz="-0.14155 0.00017685 -0.11146"
+    origin_rpy="0 0 0"
+    ixx="0.010329"
+    ixy="-3.1338E-05"
+    ixz="0.00095729"
+    iyy="0.016048"
+    iyz="-0.00013868"
+    izz="0.024377" />
+
+  <xacro:fixed_joint name="joint_base_front" parent="kafeiche_base" child="link_front_wheel_base"
+    origin_xyz="0.095085 0 0" origin_rpy="0 3.5513E-05 0" />
+
+  <xacro:mesh_link
+    name="link_front_wheel"
+    mesh="${mesh_pkg}link_front_wheel.stl"
+    mass="0.17586"
+    origin_xyz="4.1128E-06 0.00035104 -1.2434E-06"
+    origin_rpy="0 0 0"
+    ixx="0.00025233"
+    ixy="-1.0064E-09"
+    ixz="-7.7822E-09"
+    iyy="0.00048027"
+    iyz="2.3165E-10"
+    izz="0.00025235" />
+
+  <xacro:continuous_joint name="front_wheel_joint" parent="link_front_wheel_base" child="link_front_wheel"
+    origin_xyz="0.09634 0.00026026 -0.1276" origin_rpy="0 -3.5513E-05 0" axis_xyz="0 -1 0" />
+
+  <!-- left wheel module -->
+  <xacro:mesh_link
+    name="link_left_wheel_base"
+    mesh="${mesh_pkg}link_left_wheel_base.stl"
+    mass="1.5"
+    origin_xyz="0.048443 -0.12332 -0.11146"
+    origin_rpy="0 0 0"
+    ixx="0.010329"
+    ixy="-3.1343E-05"
+    ixz="0.00095779"
+    iyy="0.016048"
+    iyz="-0.00013868"
+    izz="0.024377" />
+
+  <xacro:fixed_joint name="joint_base_left" parent="kafeiche_base" child="link_left_wheel_base"
+    origin_xyz="-0.094915 0.1235 0" origin_rpy="0 0 0" />
+
+  <xacro:mesh_link
+    name="link_left_wheel"
+    mesh="${mesh_pkg}link_left_wheel.stl"
+    mass="0.21026"
+    origin_xyz="-1.6589E-06 0.00028616 -2.2144E-06"
+    origin_rpy="0 0 0"
+    ixx="0.00036256"
+    ixy="1.1833E-09"
+    ixz="-4.1373E-09"
+    iyy="0.00069288"
+    iyz="-2.2704E-09"
+    izz="0.00036258" />
+
+  <xacro:continuous_joint name="left_wheel_joint" parent="link_left_wheel_base" child="link_left_wheel"
+    origin_xyz="-0.050949 0.0248 -0.10246" origin_rpy="0 0 0" axis_xyz="0 1 0" />
+
+  <!-- right wheel module -->
+  <xacro:mesh_link
+    name="link_right_wheel_base"
+    mesh="${mesh_pkg}link_right_wheel_base.stl"
+    mass="1.5"
+    origin_xyz="0.048443 0.12368 -0.11146"
+    origin_rpy="0 0 0"
+    ixx="0.010329"
+    ixy="-3.1343E-05"
+    ixz="0.00095779"
+    iyy="0.016048"
+    iyz="-0.00013868"
+    izz="0.024377" />
+
+  <xacro:fixed_joint name="joint_base_right" parent="kafeiche_base" child="link_right_wheel_base"
+    origin_xyz="-0.0949146548918759 -0.123499999999544 0" origin_rpy="0 0 0" />
+
+  <xacro:mesh_link
+    name="link_right_wheel"
+    mesh="${mesh_pkg}link_right_wheel.stl"
+    mass="0.21028"
+    origin_xyz="-5.6684E-07 -0.00028616 -2.3983E-06"
+    origin_rpy="0 0 0"
+    ixx="0.00036258"
+    ixy="8.5283E-10"
+    ixz="-1.3395E-09"
+    iyy="0.00069293"
+    iyz="1.7019E-09"
+    izz="0.0003626" />
+
+  <xacro:continuous_joint name="right_wheel_joint" parent="link_right_wheel_base" child="link_right_wheel"
+    origin_xyz="-0.051128 -0.0248 -0.10695" origin_rpy="0 0 0" axis_xyz="0 1 0" />
+
+</robot>
