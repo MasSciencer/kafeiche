@@ -42,4 +42,4 @@ diff_controller:
     # Velocity and acceleration limits
     linear.x.has_velocity_limits: true
     linear.x.max_velocity: 2.54 # m/s
-    linear.x.min_velocity: 0.5
+    linear.x.min_velocity: -2.54

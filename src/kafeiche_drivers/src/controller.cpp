@@ -27,8 +27,9 @@ hardware_interface::CallbackReturn DiffKfc::on_init(
     // -------------------------
     // Wheel internal structure
     // -------------------------
-    left_wheel_.name     = "left_wheel";
-    right_wheel_.name    = "right_wheel";
+    left_wheel_.name     = "left_wheel_joint";
+    right_wheel_.name    = "right_wheel_joint";
+    
 
     left_wheel_.velocity = 0.0;
     right_wheel_.velocity = 0.0;

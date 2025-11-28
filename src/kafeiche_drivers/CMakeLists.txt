@@ -18,7 +18,6 @@ find_package(std_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(backward_ros REQUIRED)
-find_package(control_toolbox REQUIRED)
 
 # ==============================
 # WiringPi library (for servo motors)
@@ -57,7 +56,6 @@ ament_target_dependencies(controller PUBLIC
   rclcpp
   rclcpp_lifecycle
   backward_ros
-  control_toolbox
 )
 
 # Чтобы ROS2-control мог загрузить компонент как плагин
@@ -71,9 +69,9 @@ pluginlib_export_plugin_description_file(hardware_interface controller_hw_interf
 install(
   TARGETS servo_motor controller
   EXPORT export_${PROJECT_NAME}
-  LIBRARY DESTINATION lib
-  ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib/${PROJECT_NAME}
+  ARCHIVE DESTINATION lib/${PROJECT_NAME}
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 # Install includes

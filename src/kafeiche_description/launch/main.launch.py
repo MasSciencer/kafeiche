@@ -1,36 +1,41 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import RegisterEventHandler, DeclareLaunchArgument, IncludeLaunchDescription
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-
 def generate_launch_description():
-
-    # ===== Arguments =====
-    declared_arguments = [
+    # Declare arguments
+    declared_arguments = []
+    declared_arguments.append(
         DeclareLaunchArgument(
             "description_package",
             default_value="kafeiche_description",
-            description="Package with robot description (URDF/XACRO).",
-        ),
+            description="Description package with robot URDF/xacro files.",
+        )
+    )
+    declared_arguments.append(
         DeclareLaunchArgument(
             "description_file",
             default_value="kafeiche_base.xacro",
-            description="Xacro file with the robot model.",
-        ),
+            description="URDF/XACRO description file with the robot.",
+        )
+    )
+    declared_arguments.append(
         DeclareLaunchArgument(
             "prefix",
             default_value='""',
-            description="Prefix for joint names (optional).",
-        ),
-    ]
+            description="Prefix of the joint names, useful for multi-robot setup.",
+        )
+    )
 
+    # Initialize Arguments
     description_package = LaunchConfiguration("description_package")
     description_file = LaunchConfiguration("description_file")
     prefix = LaunchConfiguration("prefix")
 
-    # ===== Generate URDF using xacro =====
+    # Get URDF via xacro
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
@@ -39,40 +44,47 @@ def generate_launch_description():
                 [FindPackageShare(description_package), "urdf", description_file]
             ),
             " ",
-            "prefix:=", prefix,
+            "prefix:=",
+            prefix,
+        ]
+    )
+    robot_description = {"robot_description": robot_description_content}
+    robot_controllers = PathJoinSubstitution(
+        [
+            FindPackageShare("kafeiche_drivers"),
+            "config",
+            "controller.yaml",
         ]
     )
 
-    robot_description = {"robot_description": robot_description_content}
 
-    # ===== ROS2 Control node =====
-    ros2_control_node = Node(
+    print("Starting control_node")
+    # Define nodes
+    control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[
-            robot_description,
-            PathJoinSubstitution([
-                FindPackageShare("kafeiche_drivers"),
-                "config",
-                "controller.yaml"
-            ]),
-        ],
-        output="both",
+        parameters=[robot_description, robot_controllers],
+        output="screen",
     )
 
-    # ===== Spawners =====
+    robot_state_pub_node = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="screen",
+        parameters=[robot_description],
+    )
 
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["joint_state_broadcaster", "--controller-manager", "/controller_manager"],
+        arguments=["joint_state_broadcaster"],
         output="screen",
     )
 
-    diff_drive_spawner = Node(
+    diff_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["diff_drive_controller", "--controller-manager", "/controller_manager"],
+        arguments=["diff_controller"],
         output="screen",
     )
 
@@ -83,13 +95,13 @@ def generate_launch_description():
         output='screen',
     )
 
-    # ===== Return launch description =====
-    return LaunchDescription(
-        declared_arguments
-        + [
-            ros2_control_node,
-            joint_state_broadcaster_spawner,
-            diff_drive_spawner,
-            servo_motor_node,
-        ]
-    )
+    # Combine all nodes and launch descriptions
+    nodes = [
+        control_node,
+        robot_state_pub_node,
+        joint_state_broadcaster_spawner,
+        diff_controller_spawner,
+        servo_motor_node
+    ]
+
+    return LaunchDescription(declared_arguments + nodes)

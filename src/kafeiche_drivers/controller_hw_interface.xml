@@ -1,4 +1,4 @@
-<library path="controller_hw_interface">
+<library path="controller">
 	<class name="kafeiche_drivers/DiffKfc"
 		   type="kafeiche_drivers::DiffKfc"
 		   base_class_type="hardware_interface::SystemInterface">
