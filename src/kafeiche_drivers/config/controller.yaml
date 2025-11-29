@@ -1,6 +1,6 @@
 controller_manager:
   ros__parameters:
-    update_rate: 10  # Hz
+    update_rate: 20  # Hz
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
@@ -23,7 +23,7 @@ diff_controller:
     left_wheel_radius_multiplier: 1.0
     right_wheel_radius_multiplier: 1.0
 
-    publish_rate: 10.0
+    publish_rate: 20.0
     odom_frame_id: odom
     base_frame_id: base_footprint
     pose_covariance_diagonal : [0.001, 0.001, 0.001, 0.001, 0.001, 0.01]
@@ -35,11 +35,14 @@ diff_controller:
     #Этот параметр управляет публикацией трансформации между системами координат odom_frame_id (одометрия) и base_frame_id (база робота). Если установлен в true, #контроллер будет публиковать преобразование, что позволяет другим компонентам системы (например, визуализаторам или другим узлам) корректно отслеживать положение #робота в пространстве. По умолчанию значение — true, что позволяет поддерживать правильную систему координат в системе ROS2
 
 
-    cmd_vel_timeout: 0.5
+    cmd_vel_timeout: 0.2
     publish_limited_velocity: false
     #velocity_rolling_window_size: 10
 
     # Velocity and acceleration limits
     linear.x.has_velocity_limits: true
-    linear.x.max_velocity: 2.54 # m/s
-    linear.x.min_velocity: -2.54
+    linear.x.max_velocity: 2.0 # m/s
+    linear.x.min_velocity: -2.0
+    linear.x.max_acceleration: 1.0
+    
+    # angular.z.max_acceleration: 0.4
