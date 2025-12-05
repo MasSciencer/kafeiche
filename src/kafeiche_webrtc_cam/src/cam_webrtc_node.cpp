@@ -15,9 +15,9 @@ public:
             "videoconvert ! "
             "x264enc tune=zerolatency bitrate=6000 speed-preset=superfast ! "
             "rtph264pay config-interval=1 pt=96 ! "
-            "queue ! "
-            "webrtcbin name=webrtcbin stun-server=stun://stun.l.google.com:19302",
+            "udpsink host=127.0.0.1 port=5004",
             nullptr);
+        
 
         webrtcbin_ = gst_bin_get_by_name(GST_BIN(pipeline_), "webrtcbin");
 
