@@ -23,8 +23,7 @@ class EncoderClass {
 public:
     EncoderClass();
 
-    // Публичные методы
-    float getDelta(EncoderChannel ch);       // дельта угла (рад)
+    float getDelta(EncoderChannel ch);       // рад
     float getVelocity(EncoderChannel ch);    // рад/с
 
 private:
@@ -39,9 +38,16 @@ private:
     unsigned char buffer_[2];
 
     uint16_t read_raw_angle(int spi_ch);
-    float read_angle(EncoderChannel ch);
+    float    read_angle(EncoderChannel ch);
     EncState& state(EncoderChannel ch);
+
+    // direction: LEFT is inverted
+    inline float direction(EncoderChannel ch) const {
+        return (ch == EncoderChannel::LEFT) ? -1.0f : 1.0f;
+    }
 };
+
+/* ======================= implementation ======================= */
 
 EncoderClass::EncoderClass() {
     wiringPiSPISetupMode(CHANNEL0, SPI_SPEED, 3);
@@ -55,7 +61,6 @@ EncoderClass::EncoderClass() {
     right_.prev_angle = read_angle(EncoderChannel::RIGHT);
 }
 
-// --- private helpers ---
 EncoderClass::EncState& EncoderClass::state(EncoderChannel ch) {
     return (ch == EncoderChannel::LEFT) ? left_ : right_;
 }
@@ -75,32 +80,35 @@ uint16_t EncoderClass::read_raw_angle(int spi_ch) {
 }
 
 float EncoderClass::read_angle(EncoderChannel ch) {
-    uint16_t raw = read_raw_angle((int)ch);
+    uint16_t raw = read_raw_angle(static_cast<int>(ch));
     return raw * (2.0f * M_PI / MT6816_CPR);
 }
 
-// --- public API ---
+/* ======================= public API ======================= */
+
 float EncoderClass::getDelta(EncoderChannel ch) {
     EncState& s = state(ch);
 
     float angle = read_angle(ch);
     float delta = angle - s.prev_angle;
 
-    // unwrapping
-    if (delta > M_PI)       delta -= 2 * M_PI;
-    else if (delta < -M_PI) delta += 2 * M_PI;
+    // unwrap
+    if (delta > M_PI)       delta -= 2.0f * M_PI;
+    else if (delta < -M_PI) delta += 2.0f * M_PI;
 
     s.prev_angle = angle;
-    return delta;
+
+    return direction(ch) * delta;
 }
 
 float EncoderClass::getVelocity(EncoderChannel ch) {
     EncState& s = state(ch);
-    
+
     auto now = std::chrono::steady_clock::now();
     double dt = std::chrono::duration<double>(now - s.prev_time).count();
 
-    if (dt <= 0.0) return s.velocity;
+    if (dt <= 0.0)
+        return s.velocity;
 
     float delta = getDelta(ch);
     s.velocity = delta / dt;
