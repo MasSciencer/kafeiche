@@ -26,7 +26,7 @@ constexpr uint16_t MIN_RPS = 0.2;
 
 // Stepper configuration
 constexpr uint16_t STEPS_PER_REV = 200;
-constexpr uint16_t MICROSTEP = 2; // 1/1 microstepping
+constexpr uint16_t MICROSTEP = 2;
 
 class StepperClass {
 public:
@@ -118,8 +118,6 @@ void StepperClass::run() {
         delayMicroseconds(step_delay);
     }
 }
-
-
 
 inline void StepperClass::stopMotor() {
     digitalWrite(enable_pin_, HIGH);
