@@ -8,17 +8,24 @@
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/float64.hpp"
+
+#include "kafeiche_drivers/motor.hpp"
+#include "kafeiche_drivers/encoder.hpp"
 
 namespace kafeiche_drivers
 {
 
+/**
+ * @brief ROS2 Control system interface for differential drive.
+ *
+ * Implements **angular velocity** state and command interfaces (rad/s)
+ * for left and right wheels. Interacts with MotorClass and EncoderClass to
+ * control hardware directly.
+ */
 class DiffKfc : public hardware_interface::SystemInterface
 {
 public:
-    // -------------------------
-    // ROS2-Control lifecycle
-    // -------------------------
+    // lifecycle callbacks
     hardware_interface::CallbackReturn on_init(
         const hardware_interface::HardwareComponentInterfaceParams & params) override;
 
@@ -38,29 +45,20 @@ public:
 
 private:
 
-    // =============================
-    // Internal structure of wheels
-    // =============================
     struct Wheel
     {
         std::string name;
-        double velocity = 0.0;  // state
-        double command  = 0.0;  // target velocity from controller
+        double velocity = 0.0;  // state (rad/s)
+        double command  = 0.0;  // target angular velocity from controller
     };
 
     Wheel left_wheel_;
     Wheel right_wheel_;
 
-    // ROS2 node used by hardware interface
-    rclcpp::Node::SharedPtr node_;
-
-    // Publishers → servo_motor (target speeds)
-    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_left_cmd_;
-    rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_right_cmd_;
-
-    // Subscribers ← servo_motor (current speeds)
-    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr sub_left_state_;
-    rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr sub_right_state_;
+    // direct hardware objects (motors + shared encoder)
+    std::shared_ptr<MotorClass> motor_left_;
+    std::shared_ptr<MotorClass> motor_right_;
+    std::shared_ptr<EncoderClass> encoder_;
 };
 
 } // namespace kafeiche_drivers

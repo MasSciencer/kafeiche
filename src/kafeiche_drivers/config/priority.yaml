@@ -1,0 +1,19 @@
+twist_mux:
+  ros__parameters:
+
+    use_stamped: true
+
+    topics:
+      audioray:
+        topic   : cmd_vel_audioray
+        timeout : 0.5
+        priority: 8
+      server:
+        topic   : cmd_vel_server
+        timeout : 0.5
+        priority: 9
+      web:
+          topic   : cmd_vel_web
+          timeout : 0.5
+          priority: 10
+        

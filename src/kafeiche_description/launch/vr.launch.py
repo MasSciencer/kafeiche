@@ -5,8 +5,9 @@ from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, 
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
+
 def generate_launch_description():
-    # ── Аргументы запуска ───────────────────────────────────────────────
+    # launch arguments
     declared_arguments = []
     declared_arguments.append(
         DeclareLaunchArgument(
@@ -30,12 +31,12 @@ def generate_launch_description():
         )
     )
 
-    # ── Подстановки ─────────────────────────────────────────────────────
+    # substitutions
     description_package = LaunchConfiguration("description_package")
     description_file = LaunchConfiguration("description_file")
     prefix = LaunchConfiguration("prefix")
 
-    # Получаем robot_description через xacro
+    # obtain robot_description using xacro
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
@@ -58,7 +59,7 @@ def generate_launch_description():
         ]
     )
 
-    # ── Основные ноды ───────────────────────────────────────────────────
+    # core nodes
     control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
@@ -91,41 +92,28 @@ def generate_launch_description():
         output="screen",
     )
 
-    servo_motor_node = Node(
-        package='kafeiche_drivers',
-        executable='servo_motor',
-        output='screen',
-    )
-
-    # ── rosbridge_websocket ─────────────────────────────────────────────
+    # rosbridge server node (started after control_node)
     rosbridge_node = Node(
         package='rosbridge_server',
         executable='rosbridge_websocket',
         name='rosbridge_websocket',
         output='screen',
-        # Опционально — можно указать параметры, если нужно изменить порт и т.д.
-        # parameters=[{'port': 9090}],
+        # parameters=[{'port': 9090}],  # optionally modify port
     )
 
-    # Запускаем rosbridge после того, как servo_motor_node стартовала
     start_rosbridge_after_control = RegisterEventHandler(
         event_handler=OnProcessStart(
-            target_action=servo_motor_node,
+            target_action=control_node,
             on_start=[rosbridge_node]
         )
     )
 
-    # ── Сборка запуска ──────────────────────────────────────────────────
     return LaunchDescription(
         declared_arguments + [
-            # Основные ноды
             control_node,
             robot_state_pub_node,
             joint_state_broadcaster_spawner,
             diff_controller_spawner,
-            servo_motor_node,
-
-            # rosbridge запускаем после control_node
             start_rosbridge_after_control,
         ]
     )

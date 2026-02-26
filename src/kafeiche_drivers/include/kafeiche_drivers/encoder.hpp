@@ -2,29 +2,50 @@
 #define ENCODER_HPP
 
 #include <cmath>
-#include <wiringPi.h>
-#include <wiringPiSPI.h>
 #include <cstdint>
 #include <chrono>
+#include <stdexcept>
+#include <pigpiod_if2.h>
 
-#define CHANNEL0 0
-#define CHANNEL1 1
-#define SPI_SPEED 500000
-#define REGx03 0x83
-#define REGx04 0x84
-#define MT6816_CPR 16384
+#include "kafeiche_drivers/pigpio_utils.hpp"  // shared helper for pigpio connection
+
+// SPI configuration for magnetic encoders
+constexpr int SPI_CHANNEL_LEFT   = 1;   ///< corresponds to physical CE1
+constexpr int SPI_CHANNEL_RIGHT  = 0;   ///< corresponds to physical CE0
+constexpr int SPI_SPEED          = 500000;
+
+// pigpio SPI flags: mode 3 corresponds to CPOL|CPHA.  The macros
+// SPI_CPOL and SPI_CPHA are not provided by pigpio, so hardcode the value.
+constexpr int SPI_FLAGS_MODE3 = 3;  ///< SPI mode 3 (CPOL|CPHA)
+constexpr uint8_t REGx03     = 0x83;
+constexpr uint8_t REGx04     = 0x84;
+constexpr int MT6816_CPR     = 16384;
+
 
 enum class EncoderChannel : int {
-    LEFT  = CHANNEL1,
-    RIGHT = CHANNEL0
+    LEFT  = SPI_CHANNEL_LEFT,
+    RIGHT = SPI_CHANNEL_RIGHT
 };
 
+
+/**
+ * @brief Simple SPI reader for MT6816 magnetic encoders.
+ *
+ * Provides angular delta and velocity measurements in radians and rad/s.
+ */
 class EncoderClass {
 public:
     EncoderClass();
+    ~EncoderClass();
 
-    float getDelta(EncoderChannel ch);       // рад
-    float getVelocity(EncoderChannel ch);    // рад/с
+    /// Incremental angle since last call (radians).
+    float getDelta(EncoderChannel ch);
+
+    /// Current angular velocity (rad/s).
+    float getVelocity(EncoderChannel ch);
+
+private:
+    int pi_ = -1;  ///< pigpiod handle
 
 private:
     struct EncState {
@@ -37,11 +58,13 @@ private:
     EncState right_;
     unsigned char buffer_[2];
 
-    uint16_t read_raw_angle(int spi_ch);
+    int spi_handle_left_;
+    int spi_handle_right_;
+
+    uint16_t read_raw_angle(EncoderChannel ch);
     float    read_angle(EncoderChannel ch);
     EncState& state(EncoderChannel ch);
 
-    // direction: LEFT is inverted
     inline float direction(EncoderChannel ch) const {
         return (ch == EncoderChannel::LEFT) ? -1.0f : 1.0f;
     }
@@ -49,9 +72,22 @@ private:
 
 /* ======================= implementation ======================= */
 
-EncoderClass::EncoderClass() {
-    wiringPiSPISetupMode(CHANNEL0, SPI_SPEED, 3);
-    wiringPiSPISetupMode(CHANNEL1, SPI_SPEED, 3);
+EncoderClass::EncoderClass()
+{
+    // connect to pigpiod daemon and cache the handle
+    pi_ = getPiHandle();
+
+    // open two SPI channels (SPI0 CE0 and CE1) via the daemon
+    spi_handle_right_ = spi_open(pi_, SPI_CHANNEL_RIGHT, SPI_SPEED, SPI_FLAGS_MODE3);
+    spi_handle_left_  = spi_open(pi_, SPI_CHANNEL_LEFT,  SPI_SPEED, SPI_FLAGS_MODE3);
+
+    if (spi_handle_right_ < 0 || spi_handle_left_ < 0) {
+        int err = (spi_handle_right_ < 0) ? spi_handle_right_ : spi_handle_left_;
+        throw std::runtime_error(
+            std::string("Failed to open SPI channel(s) (pigpio error ") +
+            std::to_string(err) + ") – is pigpiod running and initialized?"
+        );
+    }
 
     auto now = std::chrono::steady_clock::now();
     left_.prev_time  = now;
@@ -61,32 +97,46 @@ EncoderClass::EncoderClass() {
     right_.prev_angle = read_angle(EncoderChannel::RIGHT);
 }
 
-EncoderClass::EncState& EncoderClass::state(EncoderChannel ch) {
+EncoderClass::~EncoderClass()
+{
+    if (spi_handle_left_ >= 0) spi_close(pi_, spi_handle_left_);
+    if (spi_handle_right_ >= 0) spi_close(pi_, spi_handle_right_);
+}
+
+EncoderClass::EncState& EncoderClass::state(EncoderChannel ch)
+{
     return (ch == EncoderChannel::LEFT) ? left_ : right_;
 }
 
-uint16_t EncoderClass::read_raw_angle(int spi_ch) {
+uint16_t EncoderClass::read_raw_angle(EncoderChannel ch)
+{
+    int handle = (ch == EncoderChannel::LEFT) ? spi_handle_left_ : spi_handle_right_;
+
     buffer_[0] = REGx03;
     buffer_[1] = 0x00;
-    wiringPiSPIDataRW(spi_ch, buffer_, 2);
+    spi_xfer(pi_, handle, reinterpret_cast<char *>(buffer_),
+            reinterpret_cast<char *>(buffer_), 2);
     uint16_t reg03 = buffer_[1];
 
     buffer_[0] = REGx04;
     buffer_[1] = 0x00;
-    wiringPiSPIDataRW(spi_ch, buffer_, 2);
+    spi_xfer(pi_, handle, reinterpret_cast<char *>(buffer_),
+            reinterpret_cast<char *>(buffer_), 2);
     uint16_t reg04 = buffer_[1];
 
     return (reg03 << 6) | (reg04 >> 2);
 }
 
-float EncoderClass::read_angle(EncoderChannel ch) {
-    uint16_t raw = read_raw_angle(static_cast<int>(ch));
+float EncoderClass::read_angle(EncoderChannel ch)
+{
+    uint16_t raw = read_raw_angle(ch);
     return raw * (2.0f * M_PI / MT6816_CPR);
 }
 
 /* ======================= public API ======================= */
 
-float EncoderClass::getDelta(EncoderChannel ch) {
+float EncoderClass::getDelta(EncoderChannel ch)
+{
     EncState& s = state(ch);
 
     float angle = read_angle(ch);
@@ -101,7 +151,8 @@ float EncoderClass::getDelta(EncoderChannel ch) {
     return direction(ch) * delta;
 }
 
-float EncoderClass::getVelocity(EncoderChannel ch) {
+float EncoderClass::getVelocity(EncoderChannel ch)
+{
     EncState& s = state(ch);
 
     auto now = std::chrono::steady_clock::now();
@@ -111,10 +162,10 @@ float EncoderClass::getVelocity(EncoderChannel ch) {
         return s.velocity;
 
     float delta = getDelta(ch);
-    s.velocity = delta / dt;
+    s.velocity = delta / static_cast<float>(dt);
     s.prev_time = now;
 
     return s.velocity;
 }
 
-#endif
+#endif // ENCODER_HPP

@@ -1,20 +1,21 @@
-# keyboard_rosbridge.py
+"""
+Simple keyboard teleop client for rosbridge.
+
+Arrow keys send velocity commands to the /cmd_vel_server topic.
+ESC quits and stops the robot.
+"""
+
 import json
 import threading
 import time
 import websocket
 from pynput import keyboard
 
-# ────────────────────────────────────────────────
-# Настройки
-# ────────────────────────────────────────────────
+# configuration
+ROSBRIDGE_WS = "ws://192.168.1.2:9090"   # rosbridge address
 
-ROSBRIDGE_WS = "ws://192.168.1.2:9090"   # ← ваш rosbridge адрес
-
-LINEAR_SPEED = 1.0      # м/с
-ANGULAR_SPEED = 1.0     # рад/с
-
-# ────────────────────────────────────────────────
+LINEAR_SPEED = 1.0      # m/s
+ANGULAR_SPEED = 1.0     # rad/s
 
 current_linear = 0.0
 current_angular = 0.0
@@ -22,13 +23,14 @@ current_angular = 0.0
 ws = None
 
 def on_open(ws_instance):
-    print("Подключено к rosbridge")
+    print("Connected to rosbridge")
 
 def on_error(ws_instance, error):
-    print(f"Ошибка WebSocket: {error}")
+    print(f"WebSocket error: {error}")
 
 def on_close(ws_instance, close_status_code, close_msg):
-    print("Соединение с rosbridge закрыто")
+    print("rosbridge connection closed")
+
 
 def send_twist(linear, angular):
     if ws is None or not ws.sock or not ws.sock.connected:
@@ -51,7 +53,8 @@ def send_twist(linear, angular):
     try:
         ws.send(json.dumps(msg))
     except Exception as e:
-        print(f"Ошибка отправки: {e}")
+        print(f"Failed to send: {e}")
+
 
 def run_websocket():
     global ws
@@ -61,18 +64,23 @@ def run_websocket():
         on_error=on_error,
         on_close=on_close
     )
-    ws.run_forever(ping_interval=30, ping_timeout=10)  # ping для поддержания соединения
+    ws.run_forever(ping_interval=30, ping_timeout=10)
 
-# Запуск WebSocket в отдельном потоке
+# start websocket thread
 ws_thread = threading.Thread(target=run_websocket, daemon=True)
 ws_thread.start()
 
-# Даём время на подключение
+# allow time to connect
 time.sleep(1.5)
 
-# ────────────────────────────────────────────────
-# Обработка клавиатуры
-# ────────────────────────────────────────────────
+print("Use arrow keys to drive via rosbridge:")
+print("      forward")
+print("      backward")
+print("      turn left")
+print("      turn right")
+print(" Esc  exit and stop")
+print("-" * 60)
+
 
 def on_press(key):
     global current_linear, current_angular
@@ -115,25 +123,14 @@ def on_release(key):
 
     if key == keyboard.Key.esc:
         send_twist(0.0, 0.0)
-        print("Завершение. Остановка робота.")
-        return False  # завершить listener
-
-
-# ────────────────────────────────────────────────
-
-print("Управление роботом стрелками (через rosbridge):")
-print("  ↑     — вперёд")
-print("  ↓     — назад")
-print("  ←     — влево (против часовой)")
-print("  →     — вправо (по часовой)")
-print(" Esc   — выход и остановка")
-print("-" * 60)
+        print("Exiting. Stopping robot.")
+        return False
 
 with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
     listener.join()
 
-# Принудительная остановка при выходе
+# ensure stop on exit
 send_twist(0.0, 0.0)
 if ws:
     ws.close()
-print("Программа завершена.")
+print("Program terminated.")

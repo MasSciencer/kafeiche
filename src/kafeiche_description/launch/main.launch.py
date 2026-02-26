@@ -1,12 +1,12 @@
 from launch import LaunchDescription
-from launch.actions import RegisterEventHandler, DeclareLaunchArgument, IncludeLaunchDescription
-from launch.event_handlers import OnProcessExit
+from launch.actions import RegisterEventHandler, DeclareLaunchArgument
+from launch.event_handlers import OnProcessStart
 from launch.substitutions import Command, FindExecutable, PathJoinSubstitution, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
-    # Declare arguments
+    # ── Аргументы запуска ───────────────────────────────────────────────
     declared_arguments = []
     declared_arguments.append(
         DeclareLaunchArgument(
@@ -30,12 +30,12 @@ def generate_launch_description():
         )
     )
 
-    # Initialize Arguments
+    # ── Подстановки ─────────────────────────────────────────────────────
     description_package = LaunchConfiguration("description_package")
     description_file = LaunchConfiguration("description_file")
     prefix = LaunchConfiguration("prefix")
 
-    # Get URDF via xacro
+    # Получаем robot_description через xacro
     robot_description_content = Command(
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
@@ -49,21 +49,21 @@ def generate_launch_description():
         ]
     )
     robot_description = {"robot_description": robot_description_content}
-    robot_controllers = PathJoinSubstitution(
-        [
-            FindPackageShare("kafeiche_drivers"),
-            "config",
-            "controller.yaml",
-        ]
+
+    # ── Пути к конфигам ─────────────────────────────────────────────────
+    controller_config = PathJoinSubstitution(
+        [FindPackageShare("kafeiche_drivers"), "config", "controller.yaml"]
     )
 
+    twist_mux_config = PathJoinSubstitution(
+        [FindPackageShare("kafeiche_drivers"), "config", "priority.yaml"]
+    )
 
-    print("Starting control_node")
-    # Define nodes
+    # ── Основные ноды ───────────────────────────────────────────────────
     control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, robot_controllers],
+        parameters=[robot_description, controller_config],
         output="screen",
         remappings=[
             ('/diff_controller/cmd_vel', '/cmd_vel'),
@@ -92,20 +92,47 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ===== Hardware node (servo motors) =====
+    twist_mux_node = Node(
+        package="twist_mux",
+        executable="twist_mux",
+        name="twist_mux",
+        output="screen",
+        parameters=[
+            twist_mux_config,
+        ],
+        remappings=[
+            ("cmd_vel_out", "/cmd_vel"),
+        ],
+    )
     servo_motor_node = Node(
         package='kafeiche_drivers',
         executable='servo_motor',
         output='screen',
     )
+    rosbridge_node = Node(
+        package='rosbridge_server',
+        executable='rosbridge_websocket',
+        name='rosbridge_websocket',
+        output='screen',
+    )
+    start_rosbridge_after_servo = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=servo_motor_node,
+            on_start=[rosbridge_node]
+        )
+    )
 
-    # Combine all nodes and launch descriptions
-    nodes = [
-        control_node,
-        robot_state_pub_node,
-        joint_state_broadcaster_spawner,
-        diff_controller_spawner,
-        servo_motor_node
-    ]
-
-    return LaunchDescription(declared_arguments + nodes)
+    # ── Сборка запуска ──────────────────────────────────────────────────
+    return LaunchDescription(
+        declared_arguments + [
+            # Основные ноды
+            control_node,
+            robot_state_pub_node,
+            joint_state_broadcaster_spawner,
+            diff_controller_spawner,
+            twist_mux_node,
+            servo_motor_node,
+            # rosbridge после servo_motor
+            start_rosbridge_after_servo,
+        ]
+    )

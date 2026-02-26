@@ -3,12 +3,13 @@
 #include <memory>
 #include <string>
 #include <vector>
-
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 
-#include "std_msgs/msg/float64.hpp"
+// directly control hardware
+#include "kafeiche_drivers/motor.hpp"
+#include "kafeiche_drivers/encoder.hpp"
 
 #include "kafeiche_drivers/controller.hpp"
 
@@ -24,12 +25,9 @@ hardware_interface::CallbackReturn DiffKfc::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
-    // -------------------------
-    // Wheel internal structure
-    // -------------------------
+    // initialize wheel metadata and command/state variables
     left_wheel_.name     = "left_wheel_joint";
     right_wheel_.name    = "right_wheel_joint";
-    
 
     left_wheel_.velocity = 0.0;
     right_wheel_.velocity = 0.0;
@@ -37,34 +35,26 @@ hardware_interface::CallbackReturn DiffKfc::on_init(
     left_wheel_.command  = 0.0;
     right_wheel_.command = 0.0;
 
-    // Создаём Node для общения с servo_motor
-    node_ = std::make_shared<rclcpp::Node>("kfc_hw_interface");
+    // create hardware interfaces
+    encoder_ = std::make_shared<EncoderClass>();
 
-    // Publishers → servo_motor (target velocities)
-    pub_left_cmd_ = node_->create_publisher<std_msgs::msg::Float64>(
-        "/kfc/left_wheel/target_velocity", rclcpp::QoS(10));
+    motor_left_  = std::make_shared<MotorClass>(
+        MOTOR_LEFT_DIR_PIN,
+        MOTOR_LEFT_STEP_PIN,
+        MOTOR_ENABLE_PIN,
+        false);
 
-    pub_right_cmd_ = node_->create_publisher<std_msgs::msg::Float64>(
-        "/kfc/right_wheel/target_velocity", rclcpp::QoS(10));
+    motor_right_ = std::make_shared<MotorClass>(
+        MOTOR_RIGHT_DIR_PIN,
+        MOTOR_RIGHT_STEP_PIN,
+        MOTOR_ENABLE_PIN,
+        true);
 
-    // Subscriptions ← servo_motor (current velocities)
-    sub_left_state_ = node_->create_subscription<std_msgs::msg::Float64>(
-        "/kfc/left_wheel/current_velocity",
-        rclcpp::QoS(10),
-        [this](const std_msgs::msg::Float64::SharedPtr msg)
-        {
-            left_wheel_.velocity = msg->data;
-        });
+    // start with motors disabled
+    motor_left_->setEnabled(false);
+    motor_right_->setEnabled(false);
 
-    sub_right_state_ = node_->create_subscription<std_msgs::msg::Float64>(
-        "/kfc/right_wheel/current_velocity",
-        rclcpp::QoS(10),
-        [this](const std_msgs::msg::Float64::SharedPtr msg)
-        {
-            right_wheel_.velocity = msg->data;
-        });
-
-    RCLCPP_INFO(node_->get_logger(), "DiffKfc hardware_interface initialized");
+    RCLCPP_INFO(rclcpp::get_logger("DiffKfc"), "DiffKfc hardware_interface initialized");
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
@@ -109,36 +99,37 @@ std::vector<hardware_interface::CommandInterface> DiffKfc::export_command_interf
 hardware_interface::CallbackReturn DiffKfc::on_configure(
     const rclcpp_lifecycle::State & /*previous_state*/)
 {
-    RCLCPP_INFO(node_->get_logger(), "DiffKfc configured");
+    RCLCPP_INFO(rclcpp::get_logger("DiffKfc"), "DiffKfc configured");
     return hardware_interface::CallbackReturn::SUCCESS;
 }
 
-/* =====================================================
-   READ: вызывается DiffDriveController для получения
-         фактических скоростей колёс
-   ===================================================== */
 hardware_interface::return_type DiffKfc::read(
     const rclcpp::Time &, const rclcpp::Duration &)
 {
-    // Ничего не делаем — скорости обновляются в callback подписки
+    // read angular velocities from encoder (rad/s) measured at the motor shaft
+    // the controller publishes wheel joint velocities, so we must convert
+    // through the gearbox.  the motor/wheel gearbox ratio is defined in
+    // motor.hpp as GEAR_RATIO (motor revs per wheel rev).
+    float left_vel_rad = encoder_->getVelocity(EncoderChannel::LEFT);
+    float right_vel_rad = encoder_->getVelocity(EncoderChannel::RIGHT);
+
+    // convert to wheel angular velocity: ω_wheel = ω_motor / GEAR_RATIO
+    left_wheel_.velocity  = left_vel_rad / GEAR_RATIO;
+    right_wheel_.velocity = right_vel_rad / GEAR_RATIO;
+
     return hardware_interface::return_type::OK;
 }
 
-/* =====================================================
-   WRITE: вызывается DiffDriveController,
-          чтобы отправить целевые скорости
-          → servo_motor.cpp
-   ===================================================== */
 hardware_interface::return_type DiffKfc::write(
     const rclcpp::Time &, const rclcpp::Duration &)
 {
-    std_msgs::msg::Float64 msg_left;
-    msg_left.data = left_wheel_.command;
-    pub_left_cmd_->publish(msg_left);
+    motor_left_->setSpeed(left_wheel_.command);
+    motor_right_->setSpeed(right_wheel_.command);
 
-    std_msgs::msg::Float64 msg_right;
-    msg_right.data = right_wheel_.command;
-    pub_right_cmd_->publish(msg_right);
+    // enable if any motor has a nonzero setpoint
+    bool any_active = motor_left_->isActive() || motor_right_->isActive();
+    motor_left_->setEnabled(any_active);
+    motor_right_->setEnabled(any_active);
 
     return hardware_interface::return_type::OK;
 }

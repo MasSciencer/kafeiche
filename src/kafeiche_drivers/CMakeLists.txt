@@ -20,11 +20,13 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(backward_ros REQUIRED)
 
 # ==============================
-# WiringPi library (for servo motors)
+# pigpio libraries (daemon interface only)
 # ==============================
-find_library(WIRINGPI_LIBRARIES wiringPi)
-if(NOT WIRINGPI_LIBRARIES)
-  message(FATAL_ERROR "WiringPi library not found!")
+# We only link the pigpiod_if2 client library; the legacy pigpio library is
+# intentionally omitted because all code now uses the daemon API.
+find_library(PIGPIOD_LIBRARIES pigpiod_if2 REQUIRED)
+if(NOT PIGPIOD_LIBRARIES)
+  message(FATAL_ERROR "pigpiod_if2 library not found (install dev package?)")
 endif()
 
 # ==============================
@@ -32,16 +34,10 @@ endif()
 # ==============================
 include_directories(include)
 
-# ==============================
-# servo_motor executable
-# ==============================
-add_executable(servo_motor src/servo_motor.cpp)
-target_link_libraries(servo_motor ${WIRINGPI_LIBRARIES})
-ament_target_dependencies(
-  servo_motor
-  rclcpp
-  std_msgs
-)
+# Note: the servo_motor node is no longer required now that
+# the hardware interface controls the motors directly.
+# The source file is kept for reference but is not built.
+# If desired, remove src/servo_motor.cpp from the repository.
 
 # Add shared library for hardware interface plugin
 add_library(
@@ -49,10 +45,13 @@ add_library(
   SHARED
   src/controller.cpp
 )
+# link against the daemon API library only
+if(PIGPIOD_LIBRARIES)
+  target_link_libraries(controller PUBLIC ${PIGPIOD_LIBRARIES})
+endif()
 ament_target_dependencies(controller PUBLIC
   hardware_interface
   pluginlib
-  std_msgs
   rclcpp
   rclcpp_lifecycle
   backward_ros
@@ -67,7 +66,7 @@ pluginlib_export_plugin_description_file(hardware_interface controller_hw_interf
 
 # Install executables
 install(
-  TARGETS servo_motor controller
+  TARGETS controller
   EXPORT export_${PROJECT_NAME}
   LIBRARY DESTINATION lib/${PROJECT_NAME}
   ARCHIVE DESTINATION lib/${PROJECT_NAME}
