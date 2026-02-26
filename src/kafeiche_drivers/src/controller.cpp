@@ -126,10 +126,12 @@ hardware_interface::return_type DiffKfc::write(
     motor_left_->setSpeed(left_wheel_.command);
     motor_right_->setSpeed(right_wheel_.command);
 
-    // enable if any motor has a nonzero setpoint
-    bool any_active = motor_left_->isActive() || motor_right_->isActive();
-    motor_left_->setEnabled(any_active);
-    motor_right_->setEnabled(any_active);
+    const double min_rad_s = (MIN_MOTOR_RPS * 2.0 * M_PI) / GEAR_RATIO;
+    bool any_wheel_active =
+        std::abs(left_wheel_.command)  >= min_rad_s ||
+        std::abs(right_wheel_.command) >= min_rad_s;
+
+    motor_left_->setEnabled(any_wheel_active); // ← достаточно одного вызова
 
     return hardware_interface::return_type::OK;
 }

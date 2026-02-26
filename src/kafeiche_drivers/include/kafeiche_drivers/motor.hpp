@@ -4,7 +4,6 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <thread>
 #include <algorithm>
 #include <stdexcept>
 #include <mutex>
@@ -28,7 +27,7 @@ constexpr double WHEEL_RADIUS_M = 0.075;   ///< wheel radius in meters
 constexpr double GEAR_RATIO     = 3.7;     ///< gearbox ratio
 
 // Nominal motor limits
-constexpr double MIN_MOTOR_RPS = 0;
+constexpr double MIN_MOTOR_RPS = 1.5;
 constexpr double MAX_MOTOR_RPS = 20.0;
 
 // Stepper configuration
@@ -45,7 +44,6 @@ struct WaveManager {
     static std::vector<double> speeds;
     static std::vector<bool> dirs;
 
-    // make sure we have a handle to pigpiod
     static void ensurePi() {
         if (pi < 0) {
             pi = getPiHandle();
@@ -62,31 +60,26 @@ struct WaveManager {
         return idx;
     }
 
+    // CHANGED: добавил проверку "действительно ли изменилось", чтобы не перестраивать waveform зря
     static void setSpeed(size_t idx, double rps, bool dir) {
         std::lock_guard<std::mutex> lock(mutex);
         if (idx >= speeds.size()) return;
-        if (speeds[idx] == rps && dirs[idx] == dir) {
-            return; // nothing changed
-        }
+
+        bool changed = (std::abs(speeds[idx] - rps) > 1e-6) || (dirs[idx] != dir);
+        if (!changed) return;
+
         speeds[idx] = rps;
         dirs[idx] = dir;
         rebuildWave();
     }
 
     static void rebuildWave() {
-        // stop old waveform
-        if (wave_id >= 0) {
-            wave_tx_stop(pi);
-            wave_delete(pi, wave_id);
-            wave_id = -1;
-        }
-
         // build timeline events for each motor
         struct Event { uint32_t time; uint32_t on; uint32_t off; };
         std::vector<Event> events;
 
-        // determine pattern duration from half periods (lcm) capped at 100ms
-        uint64_t pattern_us = 100000; // start with 100ms cap
+        // determine pattern duration from full step periods (lcm) capped at 100 ms
+        uint64_t pattern_us = 50000; // start with 100 ms cap
         bool first = true;
         for (size_t i = 0; i < step_pins.size(); ++i) {
             double rps = speeds[i];
@@ -94,41 +87,56 @@ struct WaveManager {
             double steps_per_sec = rps * STEPS_PER_REV * MICROSTEP;
             if (steps_per_sec <= 0.0) continue;
             uint64_t half = static_cast<uint64_t>(std::max(1.0, std::round(1e6 / (2.0 * steps_per_sec))));
+            uint64_t full = 2 * half;
             if (first) {
-                pattern_us = half;
+                pattern_us = full;
                 first = false;
             } else {
-                pattern_us = std::lcm(pattern_us, half);
+                pattern_us = std::lcm(pattern_us, full);
             }
-            if (pattern_us > 100000) {
-                pattern_us = 100000;
+            if (pattern_us > 50000) {
+                pattern_us = 50000;
                 break;
             }
         }
 
-        // generate toggles within the computed pattern duration
+        // generate toggles (integer arithmetic) + force-low at t=0 for seamlessness
+        uint32_t force_low_mask = 0;
         for (size_t i = 0; i < step_pins.size(); ++i) {
             double rps = speeds[i];
             if (rps <= 0.0) continue;
             double steps_per_sec = rps * STEPS_PER_REV * MICROSTEP;
             if (steps_per_sec <= 0.0) continue;
-            double half = 1e6 / (2.0 * steps_per_sec);
-            if (half < 1.0) half = 1.0;
-            double t = half;
-            bool high = false;
+
+            uint64_t half = static_cast<uint64_t>(std::max(1.0, std::round(1e6 / (2.0 * steps_per_sec))));
             uint32_t mask = 1u << step_pins[i];
-            while (t < static_cast<double>(pattern_us)) {
+            force_low_mask |= mask;
+
+            bool high = false;
+            uint64_t t = half;
+            while (t < pattern_us) {
+                uint32_t etime = static_cast<uint32_t>(t);
                 if (high) {
-                    events.push_back({static_cast<uint32_t>(t), 0, mask});
+                    events.push_back({etime, 0, mask});
                 } else {
-                    events.push_back({static_cast<uint32_t>(t), mask, 0});
+                    events.push_back({etime, mask, 0});
                 }
                 high = !high;
                 t += half;
             }
         }
 
+        if (force_low_mask != 0) {
+            events.push_back({0, 0, force_low_mask});
+        }
+
         if (events.empty()) {
+            // no active motors: stop and remove any existing waveform
+            if (wave_id >= 0) {
+                wave_tx_stop(pi);
+                wave_delete(pi, wave_id);
+                wave_id = -1;
+            }
             return;
         }
 
@@ -157,11 +165,18 @@ struct WaveManager {
             pulses.push_back({onMask, offMask, remaining});
         }
 
-        wave_clear(pi);
+        // create and transmit the new waveform
+        int old_id = wave_id;
+
+        wave_add_new(pi);
         wave_add_generic(pi, pulses.size(), pulses.data());
-        wave_id = wave_create(pi);
-        if (wave_id >= 0) {
-            wave_send_using_mode(pi, wave_id, PI_WAVE_MODE_REPEAT);
+        int new_id = wave_create(pi);
+        if (new_id >= 0) {
+            wave_send_using_mode(pi, new_id, PI_WAVE_MODE_REPEAT_SYNC);
+            if (old_id >= 0) {
+                wave_delete(pi, old_id);
+            }
+            wave_id = new_id;
         }
     }
 };
@@ -177,17 +192,10 @@ std::vector<bool> WaveManager::dirs;
 
 
 /**
- * @brief Controls a stepper motor via pigpiod waves in a background thread.
+ * @brief Controls a stepper motor via pigpiod waves (event-driven, no polling thread).
  *
- * Each instance registers its step pin with a global WaveManager that
- * composes a single pigpio waveform for all motors.  This avoids the
- * limitation that the pigpio daemon can only transmit one repeating wave at
- * a time – without the manager a second motor would overwrite the first.
- *
- * The class accepts **angular velocity** commands (rad/s) and converts them
- * into stepper pulses using wave chains so that DMA generates high-frequency
- * pulses without CPU intervention. The enable pin is shared between motors
- * and is driven low when any motor is active.
+ * Каждый мотор теперь мгновенно применяет команду через applyCurrentState().
+ * Убраны два лишних потока и polling каждые 20 мс.
  */
 class MotorClass {
 public:
@@ -198,35 +206,23 @@ public:
 
     ~MotorClass();
 
-    /// Set the desired angular velocity in radians per second.
     void setSpeed(double target_ang_vel_rad_s);
-
-    /// Enable or disable the motor driver (active low).
     void setEnabled(bool enabled);
 
-    /// Returns true if the motor should currently be stepping.
-    bool isActive() const {
-        return std::abs(target_motor_rps_.load(std::memory_order_relaxed)) > 0.01;
-    }
-
 private:
-    int pi_ = -1;  ///< pigpiod handle obtained at construction
+    int pi_ = -1;
 
-private:
     void initializePins();
-    void run();
 
-    std::thread motor_thread_;
-    std::atomic<bool> running_{true};
     std::atomic<double> target_motor_rps_{0.0};
-    std::atomic<bool> enabled_{false};   ///< read-only in run thread
+    std::atomic<bool> enabled_{false};
 
     uint8_t direction_pin_;
     uint8_t step_pin_;
     uint8_t enable_pin_;
     bool invert_direction_;
 
-    size_t index_{0};  ///< index in WaveManager arrays
+    size_t index_{0};
 };
 
 inline MotorClass::MotorClass(uint8_t direction_pin,
@@ -238,73 +234,48 @@ inline MotorClass::MotorClass(uint8_t direction_pin,
       enable_pin_(enable_pin),
       invert_direction_(invert_direction)
 {
-    // obtain a handle to the pigpiod daemon (throws on failure)
     pi_ = getPiHandle();
-
-    // register this motor's step pin so the shared waveform can be built
     index_ = WaveManager::registerMotor(step_pin);
 
     initializePins();
-    motor_thread_ = std::thread(&MotorClass::run, this);
+    // CHANGED: поток удалён полностью — не запускаем ничего
 }
 
 inline MotorClass::~MotorClass() {
-    running_ = false;
-    if (motor_thread_.joinable()) {
-        motor_thread_.join();
-    }
-    // stop this motor in the shared waveform
+    // CHANGED: нет потока, поэтому не нужно останавливать и join
     WaveManager::setSpeed(index_, 0.0, false);
-    // ensure driver is disabled on destruction
-    gpio_write(pi_, enable_pin_, PI_HIGH);  // disable (active LOW)
+    gpio_write(pi_, enable_pin_, PI_HIGH);  // disable
 }
 
 inline void MotorClass::initializePins() {
-
     set_mode(pi_, direction_pin_, PI_OUTPUT);
     set_mode(pi_, step_pin_,     PI_OUTPUT);
     set_mode(pi_, enable_pin_,   PI_OUTPUT);
 
     gpio_write(pi_, step_pin_,   PI_LOW);
-    gpio_write(pi_, enable_pin_, PI_HIGH);  // initially disabled
+    gpio_write(pi_, enable_pin_, PI_HIGH);
 }
 
-inline void MotorClass::setEnabled(bool enabled) {
-    enabled_.store(enabled, std::memory_order_relaxed);
+inline void MotorClass::setEnabled(bool enabled)
+{
     gpio_write(pi_, enable_pin_, enabled ? PI_LOW : PI_HIGH);
 }
 
 inline void MotorClass::setSpeed(double target_ang_vel_rad_s) {
-    // convert angular velocity (rad/s) to motor revolutions per second
-    // linear speed = omega * R, circumference = 2*pi*R, so motor_rps =
-    // (omega * R * GEAR_RATIO) / (2*pi*R) = (omega * GEAR_RATIO) / (2*pi)
-    double motor_rps = (target_ang_vel_rad_s * GEAR_RATIO) / (2.0 * M_PI);
-    target_motor_rps_.store(motor_rps, std::memory_order_relaxed);
-}
+    // конвертация рад/с → обороты двигателя в секунду
+    double target_motor_rps_ = (target_ang_vel_rad_s * GEAR_RATIO) / (2.0 * M_PI);
+    bool should_run = std::abs(target_motor_rps_) >= MIN_MOTOR_RPS;
 
-void MotorClass::run() {
-    while (running_) {
-        double target = target_motor_rps_.load(std::memory_order_relaxed);
-        bool enabled = enabled_.load(std::memory_order_relaxed);
-
-        if (!enabled || std::abs(target) < 0.01) {
-            WaveManager::setSpeed(index_, 0.0, false);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        double motor_rps = std::clamp(std::abs(target), MIN_MOTOR_RPS, MAX_MOTOR_RPS);
-        bool dir = (target > 0.0);
-        if (invert_direction_) dir = !dir;
-
-        gpio_write(pi_, direction_pin_, dir ? PI_HIGH : PI_LOW);
-        WaveManager::setSpeed(index_, motor_rps, dir);
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!should_run) {
+        WaveManager::setSpeed(index_, 0.0, false);
+        return;
     }
-    // ensure stopped when thread exits
-    WaveManager::setSpeed(index_, 0.0, false);
-}
+    double motor_rps = std::clamp(std::abs(target_motor_rps_), MIN_MOTOR_RPS, MAX_MOTOR_RPS);
+    bool dir = (target_motor_rps_ > 0.0);
+    if (invert_direction_) dir = !dir;
 
+    gpio_write(pi_, direction_pin_, dir ? PI_HIGH : PI_LOW);
+    WaveManager::setSpeed(index_, motor_rps, dir);
+}
 
 #endif // MOTOR_HPP
