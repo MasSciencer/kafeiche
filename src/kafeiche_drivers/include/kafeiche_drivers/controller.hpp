@@ -49,6 +49,7 @@ private:
     {
         std::string name;
         double velocity = 0.0;  // state (rad/s)
+        double position = 0.0;  // state (radians)
         double command  = 0.0;  // target angular velocity from controller
     };
 

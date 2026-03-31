@@ -16,23 +16,23 @@
 #include "kafeiche_drivers/pigpio_utils.hpp"  // shared helper for pigpio connection
 
 // GPIO pins (BCM numbering)
-constexpr uint8_t MOTOR_LEFT_DIR_PIN   = 26;
-constexpr uint8_t MOTOR_LEFT_STEP_PIN  = 13;
-constexpr uint8_t MOTOR_RIGHT_DIR_PIN  = 27;
-constexpr uint8_t MOTOR_RIGHT_STEP_PIN = 4;
+constexpr uint8_t MOTOR_LEFT_DIR_PIN   = 27;
+constexpr uint8_t MOTOR_LEFT_STEP_PIN  = 4;
+constexpr uint8_t MOTOR_RIGHT_DIR_PIN  = 26;
+constexpr uint8_t MOTOR_RIGHT_STEP_PIN = 13;
 constexpr uint8_t MOTOR_ENABLE_PIN     = 12; // common enable for both motors (active LOW)
 
 // Physical parameters
-constexpr double WHEEL_RADIUS_M = 0.075;   ///< wheel radius in meters
+constexpr double WHEEL_RADIUS_M = 0.07504;   ///< wheel radius in meters
 constexpr double GEAR_RATIO     = 3.7;     ///< gearbox ratio
 
 // Nominal motor limits
-constexpr double MIN_MOTOR_RPS = 1.5;
+constexpr double MIN_MOTOR_RPS = 1.0; // default is 1.6
 constexpr double MAX_MOTOR_RPS = 20.0;
 
 // Stepper configuration
 constexpr uint16_t STEPS_PER_REV = 200;
-constexpr uint16_t MICROSTEP     = 32;
+constexpr uint16_t MICROSTEP     = 8;
 
 // helper that constructs one shared waveform for all registered motors
 namespace {
@@ -60,7 +60,6 @@ struct WaveManager {
         return idx;
     }
 
-    // CHANGED: добавил проверку "действительно ли изменилось", чтобы не перестраивать waveform зря
     static void setSpeed(size_t idx, double rps, bool dir) {
         std::lock_guard<std::mutex> lock(mutex);
         if (idx >= speeds.size()) return;
@@ -194,8 +193,7 @@ std::vector<bool> WaveManager::dirs;
 /**
  * @brief Controls a stepper motor via pigpiod waves (event-driven, no polling thread).
  *
- * Каждый мотор теперь мгновенно применяет команду через applyCurrentState().
- * Убраны два лишних потока и polling каждые 20 мс.
+ * Каждый мотор применяет команду через applyCurrentState().
  */
 class MotorClass {
 public:
@@ -264,12 +262,12 @@ inline void MotorClass::setEnabled(bool enabled)
 inline void MotorClass::setSpeed(double target_ang_vel_rad_s) {
     // конвертация рад/с → обороты двигателя в секунду
     double target_motor_rps_ = (target_ang_vel_rad_s * GEAR_RATIO) / (2.0 * M_PI);
-    bool should_run = std::abs(target_motor_rps_) >= MIN_MOTOR_RPS;
+    // bool should_run = std::abs(target_motor_rps_) >= MIN_MOTOR_RPS;
 
-    if (!should_run) {
-        WaveManager::setSpeed(index_, 0.0, false);
-        return;
-    }
+    // if (!should_run) {
+    //     WaveManager::setSpeed(index_, 0.0, false);
+    //     return;
+    // }
     double motor_rps = std::clamp(std::abs(target_motor_rps_), MIN_MOTOR_RPS, MAX_MOTOR_RPS);
     bool dir = (target_motor_rps_ > 0.0);
     if (invert_direction_) dir = !dir;

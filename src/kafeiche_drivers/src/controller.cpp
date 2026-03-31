@@ -31,7 +31,8 @@ hardware_interface::CallbackReturn DiffKfc::on_init(
 
     left_wheel_.velocity = 0.0;
     right_wheel_.velocity = 0.0;
-
+    left_wheel_.position = 0.0;
+    right_wheel_.position = 0.0;
     left_wheel_.command  = 0.0;
     right_wheel_.command = 0.0;
 
@@ -61,7 +62,8 @@ hardware_interface::CallbackReturn DiffKfc::on_init(
 std::vector<hardware_interface::StateInterface> DiffKfc::export_state_interfaces()
 {
     std::vector<hardware_interface::StateInterface> state_interfaces;
-
+    
+    // LEFT
     state_interfaces.emplace_back(
         hardware_interface::StateInterface(
             left_wheel_.name,
@@ -70,9 +72,22 @@ std::vector<hardware_interface::StateInterface> DiffKfc::export_state_interfaces
 
     state_interfaces.emplace_back(
         hardware_interface::StateInterface(
+            left_wheel_.name,
+            hardware_interface::HW_IF_POSITION,
+            &left_wheel_.position));
+
+    // RIGHT
+    state_interfaces.emplace_back(
+        hardware_interface::StateInterface(
             right_wheel_.name,
             hardware_interface::HW_IF_VELOCITY,
             &right_wheel_.velocity));
+
+    state_interfaces.emplace_back(
+        hardware_interface::StateInterface(
+            right_wheel_.name,
+            hardware_interface::HW_IF_POSITION,
+            &right_wheel_.position));
 
     return state_interfaces;
 }
@@ -109,13 +124,17 @@ hardware_interface::return_type DiffKfc::read(
     // read angular velocities from encoder (rad/s) measured at the motor shaft
     // the controller publishes wheel joint velocities, so we must convert
     // through the gearbox.  the motor/wheel gearbox ratio is defined in
-    // motor.hpp as GEAR_RATIO (motor revs per wheel rev).
-    float left_vel_rad = encoder_->getVelocity(EncoderChannel::LEFT);
-    float right_vel_rad = encoder_->getVelocity(EncoderChannel::RIGHT);
+    // Получаем оба значения одним вызовом
+    auto left = encoder_->getMeasurement(EncoderChannel::LEFT);
+    auto right = encoder_->getMeasurement(EncoderChannel::RIGHT);
 
-    // convert to wheel angular velocity: ω_wheel = ω_motor / GEAR_RATIO
-    left_wheel_.velocity  = left_vel_rad / GEAR_RATIO;
-    right_wheel_.velocity = right_vel_rad / GEAR_RATIO;
+    left_wheel_.velocity  = left.velocity / GEAR_RATIO;
+    right_wheel_.velocity = right.velocity / GEAR_RATIO;
+    left_wheel_.position  = left.position / GEAR_RATIO;
+    right_wheel_.position = right.position / GEAR_RATIO;
+
+    // Log wheel speeds (short one‑line, warn level)
+    //RCLCPP_WARN(rclcpp::get_logger("DiffKfc"), "L: %.2f, R: %.2f", left_wheel_.velocity, right_wheel_.velocity);
 
     return hardware_interface::return_type::OK;
 }
@@ -131,7 +150,7 @@ hardware_interface::return_type DiffKfc::write(
         std::abs(left_wheel_.command)  >= min_rad_s ||
         std::abs(right_wheel_.command) >= min_rad_s;
 
-    motor_left_->setEnabled(any_wheel_active); // ← достаточно одного вызова
+    motor_left_->setEnabled(any_wheel_active);
 
     return hardware_interface::return_type::OK;
 }
